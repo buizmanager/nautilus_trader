@@ -21,6 +21,7 @@ import msgspec
 
 from nautilus_trader.adapters.betfair.client import BetfairHttpClient
 from nautilus_trader.common.component import Logger
+from nautilus_trader.common.enums import LogColor
 from nautilus_trader.core.nautilus_pyo3 import SocketClient
 from nautilus_trader.core.nautilus_pyo3 import SocketConfig
 
@@ -59,7 +60,9 @@ class BetfairStreamClient:
         self._client: SocketClient | None = None
         self.unique_id = next(UNIQUE_ID)
         self.is_connected: bool = False
-        self.disconnecting: bool = False
+        self.is_authenticated: bool = False
+        self.is_reconnecting = False
+        self.is_disconnecting: bool = False
         self._loop = asyncio.get_event_loop()
 
     async def connect(self):
@@ -79,23 +82,19 @@ class BetfairStreamClient:
         )
         self._client = await SocketClient.connect(
             config,
-            None,
+            self.post_connection,
             self.post_reconnection,
-            None,
-            # TODO - waiting for async handling
-            # self.post_connection,
-            # self.post_reconnection,
-            # self.post_disconnection,
+            self.post_disconnection,
         )
         self._log.debug("Running post connect")
         await self.post_connection()
 
         self.is_connected = True
-        self._log.info("Connected.")
+        self._log.info("Connected to betfair.", color=LogColor.BLUE)
 
     async def disconnect(self):
         self._log.info("Disconnecting .. ")
-        self.disconnecting = True
+        self.is_disconnecting = True
         if self._client is None:
             self._log.warning("Cannot disconnect: not connected")
             return
@@ -112,6 +111,7 @@ class BetfairStreamClient:
         """
         Actions to be performed post connection.
         """
+        raise NotImplementedError
 
     def post_reconnection(self) -> None:
         """
@@ -175,9 +175,9 @@ class BetfairOrderStreamClient(BetfairStreamClient):
         }
         await self.send(msgspec.json.encode(self.auth_message()))
         await self.send(msgspec.json.encode(subscribe_msg))
+        self.is_authenticated = True
 
     def post_reconnection(self):
-        super().post_reconnection()
         self._loop.create_task(self.post_connection())
 
 
@@ -281,8 +281,8 @@ class BetfairMarketStreamClient(BetfairStreamClient):
         await self.send(msgspec.json.encode(message))
 
     async def post_connection(self) -> None:
-        await super().post_connection()
         await self.send(msgspec.json.encode(self.auth_message()))
+        self.is_authenticated = True
 
     def post_reconnection(self) -> None:
         super().post_reconnection()

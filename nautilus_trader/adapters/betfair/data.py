@@ -153,8 +153,11 @@ class BetfairDataClient(LiveMarketDataClient):
 
     async def _keep_alive(self) -> None:
         self._log.info(f"Starting keep-alive every {self.keep_alive_period}s")
-        while True:
+        while self._stream.is_connected:
             await asyncio.sleep(self.keep_alive_period)
+            if not self._stream.is_connected:
+                self._log.warning("Stream disconnected, stopping keep-alive")
+                break
             self._log.info("Sending keep-alive")
             await self._client.keep_alive()
 
@@ -168,6 +171,10 @@ class BetfairDataClient(LiveMarketDataClient):
         await self._client.disconnect()
 
     async def _reconnect(self) -> None:
+        if self._stream.is_reconnecting:
+            self._log.warning("Waiting for reconnect.")
+            return
+        self._stream.is_reconnecting = True
         self._log.info("Attempting reconnect")
         if self._stream.is_connected:
             self._log.info("Stream connected, disconnecting")
@@ -324,7 +331,7 @@ class BetfairDataClient(LiveMarketDataClient):
         if isinstance(update, MCM):
             self._on_market_update(mcm=update)
         elif isinstance(update, Connection):
-            pass
+            self._stream.is_connected = True
         elif isinstance(update, Status):
             self._handle_status_message(update=update)
         else:
@@ -362,12 +369,16 @@ class BetfairDataClient(LiveMarketDataClient):
                     self._log.warning(f"Conflated stream - data received is delayed ({ms_delay}ms)")
 
     def _handle_status_message(self, update: Status) -> None:
+        if update.status_code == "SUCCESS":
+            self._stream.is_authenticated = True
         if update.status_code == "FAILURE" and update.connection_closed:
-            self._log.error(f"Error connecting to betfair: {update.error_message}")
+            self._log.warning(f"Socket disconnected: {update.error_message}")
+            self._stream.is_authenticated = False
+            self._stream.is_connected = False
             if update.error_code == "MAX_CONNECTION_LIMIT_EXCEEDED":
                 raise RuntimeError("No more connections available")
             elif update.error_code == "SUBSCRIPTION_LIMIT_EXCEEDED":
                 raise RuntimeError("Subscription request limit exceeded")
             else:
-                self._log.info("Unknown failure message, scheduling restart")
+                self._log.error("Unknown failure message, scheduling restart")
                 self.create_task(self._reconnect())

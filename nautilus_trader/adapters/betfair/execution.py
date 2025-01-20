@@ -1055,6 +1055,9 @@ class BetfairExecutionClient(LiveExecutionClient):
         return None
 
     def _handle_status_message(self, update: Status) -> None:
+        if update.status_code == "SUCCESS":
+            self.stream.is_connected = True
+            self.stream.is_authenticated = True
         if update.is_error and update.connection_closed:
             self._log.warning(str(update))
             if update.error_code == StatusErrorCode.MAX_CONNECTION_LIMIT_EXCEEDED:
